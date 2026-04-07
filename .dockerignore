@@ -1,0 +1,27 @@
+# Dependencies — will be reinstalled inside the image
+node_modules/
+
+# Environment files — NEVER bake secrets into the image
+.env
+.env.*
+!.env.example
+
+# Git
+.git/
+.gitignore
+
+# Logs
+*.log
+logs/
+
+# OS / editor artifacts
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Prisma local dev files
+prisma/migrations/migration_lock.toml
+
+# README & docs (not needed at runtime)
+README.md
