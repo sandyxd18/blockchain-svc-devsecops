@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.utils.logging import setup_logging
+from app.utils.logger import setup_logging
 from app.utils.tracing import setup_tracing
 from app.utils.metrics import get_metrics, http_requests_total, http_request_duration_seconds
 from app.db.database import init_db, close_db, get_session
@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI):
     """
     # ── Startup ──────────────────────────────────────────────────────────────
     setup_logging()
-    setup_tracing(app)
+    setup_tracing()
 
     from app.utils.logger import get_logger
     logger = get_logger(__name__)
@@ -69,6 +69,10 @@ app = FastAPI(
     openapi_url="/openapi.json",
     lifespan=lifespan,
 )
+
+# Instrument FastAPI BEFORE app starts (must be at module level, not in lifespan)
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+FastAPIInstrumentor.instrument_app(app)
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
 

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 
 # ── Block Types ───────────────────────────────────────────────────────────────
 
-BlockType = Literal["order", "deployment"]
+BlockType = Literal["genesis", "order", "deployment"]
 
 
 # ── Request Payloads ──────────────────────────────────────────────────────────

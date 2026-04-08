@@ -44,9 +44,9 @@ COPY --chown=appuser:appgroup app/ ./app/
 
 USER appuser
 
-EXPOSE 8000
+EXPOSE ${PORT:-8000}
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD python -c "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"
+  CMD python -c "import urllib.request, os; urllib.request.urlopen(f'http://localhost:{os.environ.get(\"PORT\", \"8000\")}/health')"
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--log-config", "/dev/null"]
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --no-access-log --log-level warning
