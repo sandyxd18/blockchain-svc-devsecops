@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.database import get_session
 from app.models.block import (
     OrderBlockRequest,
-    DeploymentBlockRequest,
+    PaymentBlockRequest,
     AddBlockResponse,
     ChainResponse,
     ValidationResponse,
@@ -85,44 +85,50 @@ async def add_order_block(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
-# ── Add Deployment Block ──────────────────────────────────────────────────────
+# ── Add Payment Block ─────────────────────────────────────────────────────────
 
 @router.post(
-    "/deployment",
+    "/payment",
     response_model=AddBlockResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Add a deployment verification block",
-    description="Records a DevSecOps deployment event on the blockchain including scan results.",
+    summary="Add a payment block to the blockchain",
+    description="Records a payment transaction on the blockchain. payment_id must be unique.",
 )
-async def add_deployment_block(
-    payload: DeploymentBlockRequest,
+async def add_payment_block(
+    payload: PaymentBlockRequest,
     session: AsyncSession = Depends(get_session),
 ):
     bc = get_blockchain()
     try:
-        block = await bc.add_deployment_block(payload.model_dump(), session)
+        block = await bc.add_payment_block(payload.model_dump(), session)
         blocks_total.set(bc.length)
         blockchain_operations_total.labels(
-            operation="add", block_type="deployment", status="success"
+            operation="add", block_type="payment", status="success"
         ).inc()
 
         logger.info(
-            "api_add_deployment_block",
-            service=payload.service,
-            commit=payload.commit_hash,
+            "api_add_payment_block",
+            payment_id=payload.payment_id,
+            order_id=payload.order_id,
             index=block.index,
         )
         return AddBlockResponse(
             success=True,
-            message=f"Deployment of '{payload.service}' recorded at index {block.index}",
+            message=f"Payment '{payload.payment_id}' recorded on blockchain at index {block.index}",
             block=_block_to_response(block),
         )
 
+    except DuplicateEntryError as e:
+        blockchain_operations_total.labels(
+            operation="add", block_type="payment", status="duplicate"
+        ).inc()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+
     except BlockchainError as e:
         blockchain_operations_total.labels(
-            operation="add", block_type="deployment", status="error"
+            operation="add", block_type="payment", status="error"
         ).inc()
-        logger.error("api_add_deployment_block_failed", error=str(e))
+        logger.error("api_add_payment_block_failed", error=str(e))
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
@@ -218,21 +224,21 @@ async def verify_order(order_id: str):
     )
 
 
-# ── Verify Deployment ─────────────────────────────────────────────────────────
+# ── Verify Payment ────────────────────────────────────────────────────────────
 
 @router.get(
-    "/verify/deployment/{service}",
+    "/verify/payment/{payment_id}",
     response_model=VerifyResponse,
-    summary="Verify latest deployment integrity for a service",
-    description="Checks if the most recent deployment of a service exists and has not been tampered.",
+    summary="Verify payment integrity on the blockchain",
+    description="Checks if a payment exists and its data has not been tampered with.",
 )
-async def verify_deployment(service: str):
+async def verify_payment(payment_id: str):
     bc = get_blockchain()
-    found, block = bc.verify_deployment(service)
+    found, block = bc.verify_payment(payment_id)
 
     blockchain_operations_total.labels(
         operation="verify",
-        block_type="deployment",
+        block_type="payment",
         status="found" if block else "not_found",
     ).inc()
 
@@ -240,17 +246,17 @@ async def verify_deployment(service: str):
         return VerifyResponse(
             found=False,
             status="NOT_FOUND",
-            message=f"No deployment record found for service '{service}'",
+            message=f"No blockchain record found for payment '{payment_id}'",
         )
 
     status_str = "VALID" if found else "TAMPERED"
     message    = (
-        f"Latest deployment of '{service}' is VALID — integrity confirmed"
+        f"Payment '{payment_id}' blockchain record is VALID — data integrity confirmed"
         if found
-        else f"Latest deployment of '{service}' is TAMPERED — hash mismatch detected"
+        else f"Payment '{payment_id}' blockchain record is TAMPERED — hash mismatch detected"
     )
 
-    logger.info("deployment_verified", service=service, status=status_str)
+    logger.info("payment_verified", payment_id=payment_id, status=status_str)
 
     return VerifyResponse(
         found=True,
@@ -258,27 +264,3 @@ async def verify_deployment(service: str):
         message=message,
         block=_block_to_response(block),
     )
-
-
-# ── Get Deployment History ────────────────────────────────────────────────────
-
-@router.get(
-    "/history/deployment/{service}",
-    summary="Get full deployment history for a service",
-    description="Returns all deployment blocks for a service, oldest first.",
-)
-async def get_deployment_history(service: str):
-    bc = get_blockchain()
-    deployments = bc.get_all_deployments(service)
-
-    if not deployments:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No deployment history found for service '{service}'",
-        )
-
-    return {
-        "service": service,
-        "total":   len(deployments),
-        "history": [_block_to_response(b) for b in deployments],
-    }

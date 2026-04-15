@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 
 # ── Block Types ───────────────────────────────────────────────────────────────
 
-BlockType = Literal["genesis", "order", "deployment"]
+BlockType = Literal["genesis", "order", "payment"]
 
 
 # ── Request Payloads ──────────────────────────────────────────────────────────
@@ -30,23 +30,29 @@ class OrderBlockRequest(BaseModel):
         return v.upper()
 
 
-class DeploymentBlockRequest(BaseModel):
-    """Payload for POST /blockchain/deployment"""
-    service:      str  = Field(..., min_length=1, max_length=128, examples=["order-service"])
-    image_digest: str  = Field(..., min_length=1, description="Container image digest (sha256:...)")
-    commit_hash:  str  = Field(..., min_length=7, max_length=64, examples=["abc1234"])
-    sast:         str  = Field(..., examples=["PASS", "FAIL"])
-    trivy:        str  = Field(..., examples=["PASS", "FAIL"])
-    dast:         str  = Field(..., examples=["PASS", "FAIL"])
-    deployed_by:  Optional[str] = Field(None, examples=["ci-pipeline"])
-    environment:  Optional[str] = Field(None, examples=["production", "staging"])
+class PaymentBlockRequest(BaseModel):
+    """Payload for POST /blockchain/payment"""
+    payment_id:     str   = Field(..., min_length=1, max_length=128, examples=["PAY-456"])
+    order_id:       str   = Field(..., min_length=1, max_length=128, examples=["ORD-123"])
+    user_id:        str   = Field(..., min_length=1, max_length=128, examples=["U-001"])
+    amount:         float = Field(..., gt=0, description="Payment amount in smallest currency unit")
+    payment_method: str   = Field(..., examples=["QRIS", "TRANSFER", "CARD"])
+    status:         str   = Field(..., examples=["SUCCESS", "FAILED", "PENDING"])
 
-    @field_validator("sast", "trivy", "dast")
+    @field_validator("status")
     @classmethod
-    def validate_scan_result(cls, v: str) -> str:
-        allowed = {"PASS", "FAIL", "SKIPPED"}
+    def validate_status(cls, v: str) -> str:
+        allowed = {"SUCCESS", "FAILED", "PENDING", "REFUNDED"}
         if v.upper() not in allowed:
-            raise ValueError(f"Scan result must be one of: {allowed}")
+            raise ValueError(f"status must be one of: {allowed}")
+        return v.upper()
+
+    @field_validator("payment_method")
+    @classmethod
+    def validate_payment_method(cls, v: str) -> str:
+        allowed = {"QRIS", "TRANSFER", "CARD", "WALLET", "COD"}
+        if v.upper() not in allowed:
+            raise ValueError(f"payment_method must be one of: {allowed}")
         return v.upper()
 
 

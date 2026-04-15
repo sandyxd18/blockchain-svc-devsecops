@@ -59,8 +59,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Blockchain Service",
     description=(
-        "Lightweight blockchain microservice for order transaction integrity "
-        "and DevSecOps deployment verification. "
+        "Lightweight blockchain microservice for payment transaction integrity. "
+        "Records and verifies payment blocks with tamper-evident SHA256 hashing. "
         "No mining, no tokens — immutable append-only ledger."
     ),
     version=settings.service_version,
@@ -78,8 +78,8 @@ FastAPIInstrumentor.instrument_app(app)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if not settings.is_production else [],
-    allow_methods=["GET", "POST"],
+    allow_origins=["*"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 

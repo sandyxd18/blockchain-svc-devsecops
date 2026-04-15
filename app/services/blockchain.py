@@ -36,9 +36,9 @@ class Blockchain:
 
     def __init__(self) -> None:
         self._chain: list[Block] = []
-        # In-memory index for fast O(1) lookups by order_id and service
-        self._order_index:      dict[str, Block] = {}
-        self._deployment_index: dict[str, list[Block]] = {}
+        # In-memory index for fast O(1) lookups by order_id and payment_id
+        self._order_index:   dict[str, Block] = {}
+        self._payment_index: dict[str, Block] = {}
 
     # ── Properties ────────────────────────────────────────────────────────────
 
@@ -124,10 +124,10 @@ class Blockchain:
             if order_id:
                 self._order_index[str(order_id)] = block
 
-        elif block.block_type == "deployment":
-            service = block.data.get("service")
-            if service:
-                self._deployment_index.setdefault(str(service), []).append(block)
+        elif block.block_type == "payment":
+            payment_id = block.data.get("payment_id")
+            if payment_id:
+                self._payment_index[str(payment_id)] = block
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -187,12 +187,17 @@ class Blockchain:
         )
         return block
 
-    async def add_deployment_block(self, data: dict, session: AsyncSession) -> Block:
+    async def add_payment_block(self, data: dict, session: AsyncSession) -> Block:
         """
-        Add a deployment block. Multiple deployments of the same service are allowed
-        (deployment history is valuable — do not deduplicate).
+        Add a payment block. Prevents duplicate payment_id entries.
         """
-        block = self._build_block(data, "deployment")
+        payment_id = str(data.get("payment_id", ""))
+        if payment_id in self._payment_index:
+            raise DuplicateEntryError(
+                f"Payment '{payment_id}' already exists in the blockchain"
+            )
+
+        block = self._build_block(data, "payment")
         self._append_to_memory(block)
 
         session.add(self._block_to_record(block))
@@ -200,9 +205,9 @@ class Blockchain:
 
         logger.info(
             "block_added",
-            block_type="deployment",
+            block_type="payment",
             index=block.index,
-            service=data.get("service"),
+            payment_id=payment_id,
             hash=block.hash[:16],
         )
         return block
@@ -283,16 +288,16 @@ class Blockchain:
         )
         return recomputed == block.hash, block
 
-    def verify_deployment(self, service: str) -> tuple[bool, Optional[Block]]:
+    def verify_payment(self, payment_id: str) -> tuple[bool, Optional[Block]]:
         """
-        Verify the most recent deployment block for a service.
-        Returns (found, latest_block).
+        Verify that a payment exists in the blockchain and has not been tampered with.
+        Returns (found, block).
         """
-        deployments = self._deployment_index.get(str(service))
-        if not deployments:
+        block = self._payment_index.get(str(payment_id))
+        if not block:
             return False, None
 
-        block = deployments[-1]   # most recent deployment
+        # Recompute hash to detect tampering
         recomputed = self.calculate_hash(
             block.index,
             block.timestamp,
@@ -301,10 +306,6 @@ class Blockchain:
             block.previous_hash,
         )
         return recomputed == block.hash, block
-
-    def get_all_deployments(self, service: str) -> list[Block]:
-        """Return full deployment history for a service."""
-        return list(self._deployment_index.get(str(service), []))
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
