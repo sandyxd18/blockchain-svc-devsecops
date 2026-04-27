@@ -3,8 +3,8 @@
 Production-ready lightweight blockchain microservice built with **Python**, **FastAPI**, **PostgreSQL**, and **SQLAlchemy** — fully instrumented with metrics, logs, and distributed tracing via the Grafana observability stack.
 
 Supports two use cases:
-1. **Application-level blockchain** — immutable order transaction ledger
-2. **DevSecOps-level blockchain** — deployment verification and audit trail
+1. **Order integrity** — immutable ledger for order transactions
+2. **Payment integrity** — immutable ledger for payment confirmations
 
 > This is **NOT a cryptocurrency**. No mining, no tokens, no consensus. This is an integrity and auditability ledger.
 
@@ -84,7 +84,7 @@ SERVICE_NAME=blockchain-service
 LOG_LEVEL=DEBUG
 
 # Observability
-OTEL_EXPORTER_OTLP_ENDPOINT="http://alloy:4317"
+OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"
 ```
 
 ### 3. Start
@@ -107,12 +107,11 @@ Swagger UI: http://localhost:8000/docs
 | GET | `/metrics` | — | Prometheus metrics |
 | GET | `/docs` | — | Swagger UI (auto-generated) |
 | POST | `/blockchain/order` | — | Add order transaction block |
-| POST | `/blockchain/deployment` | — | Add deployment verification block |
+| POST | `/blockchain/payment` | — | Add payment transaction block |
 | GET | `/blockchain/chain` | — | Get full blockchain |
 | GET | `/blockchain/validate` | — | Validate chain integrity |
 | GET | `/blockchain/verify/order/{order_id}` | — | Verify order integrity |
-| GET | `/blockchain/verify/deployment/{service}` | — | Verify deployment integrity |
-| GET | `/blockchain/history/deployment/{service}` | — | Get deployment history |
+| GET | `/blockchain/verify/payment/{payment_id}` | — | Verify payment integrity |
 
 ---
 
@@ -154,21 +153,17 @@ Records an order transaction as an immutable block. `order_id` must be unique.
 
 ---
 
-### POST /blockchain/deployment
+### POST /blockchain/payment
 
-Records a DevSecOps deployment event. Multiple deployments per service are allowed (full history preserved).
+Records a payment confirmation as an immutable block. `payment_id` must be unique.
 
 **Request:**
 ```json
 {
-  "service":      "order-service",
-  "image_digest": "sha256:abc123def456...",
-  "commit_hash":  "a1b2c3d",
-  "sast":         "PASS",
-  "trivy":        "PASS",
-  "dast":         "PASS",
-  "deployed_by":  "ci-pipeline",
-  "environment":  "production"
+  "payment_id": "PAY-123",
+  "order_id":   "ORD-123",
+  "amount":     71980,
+  "status":     "PAID"
 }
 ```
 
@@ -176,8 +171,8 @@ Records a DevSecOps deployment event. Multiple deployments per service are allow
 ```json
 {
   "success": true,
-  "message": "Deployment of 'order-service' recorded at index 2",
-  "block":   { "..." : "..." }
+  "message": "Payment 'PAY-123' recorded on blockchain at index 2",
+  "block": { "..." : "..." }
 }
 ```
 
@@ -233,26 +228,17 @@ Verifies that an order record has not been tampered with since it was added to t
 
 ---
 
-### GET /blockchain/verify/deployment/{service}
+### GET /blockchain/verify/payment/{payment_id}
 
-Verifies the most recent deployment of a service.
-
-```
-GET /blockchain/verify/deployment/order-service
-```
-
----
-
-### GET /blockchain/history/deployment/{service}
-
-Returns the full deployment history for a service (all deployment blocks, oldest first).
+Verifies that a payment record has not been tampered with.
 
 **200 OK:**
 ```json
 {
-  "service": "order-service",
-  "total":   3,
-  "history": [{ "index": 2, "..." : "..." }, { "index": 5, "..." : "..." }]
+  "found":   true,
+  "status":  "VALID",
+  "message": "Payment 'PAY-123' blockchain record is VALID — data integrity confirmed",
+  "block":   { "..." : "..." }
 }
 ```
 
@@ -266,7 +252,7 @@ Returns the full deployment history for a service (all deployment blocks, oldest
 Block {
   index:         int          — position in chain (0 = genesis)
   timestamp:     ISO8601      — UTC timestamp of block creation
-  block_type:    string       — "genesis" | "order" | "deployment"
+  block_type:    string       — "genesis" | "order" | "payment"
   data:          JSON         — the actual payload
   previous_hash: SHA256       — hash of the preceding block (links the chain)
   hash:          SHA256       — SHA256(index + timestamp + type + data + previous_hash)
@@ -288,9 +274,9 @@ hash = SHA256(
 ### Chain Integrity
 
 ```
-[Genesis Block]  →  [Order Block]  →  [Deployment Block]  →  [Order Block]
-  hash: "abc..."      hash: "def..."    hash: "ghi..."          hash: "jkl..."
-  prev: "000..."      prev: "abc..."    prev: "def..."          prev: "ghi..."
+[Genesis]  →  [Order Block]  →  [Payment Block]  →  [Order Block]
+  hash: "abc..."      hash: "def..."    hash: "ghi..."      hash: "jkl..."
+  prev: "000..."      prev: "abc..."    prev: "def..."      prev: "ghi..."
 ```
 
 > Any modification to a block changes its hash, breaking the `previous_hash` link of the next block — making tampering immediately detectable during validation.
@@ -300,7 +286,7 @@ hash = SHA256(
 ## Example API Usage (curl)
 
 ```bash
-BASE=http://localhost:3004
+BASE=http://localhost:8000
 
 # Add order block
 curl -X POST $BASE/blockchain/order \
@@ -313,17 +299,14 @@ curl -X POST $BASE/blockchain/order \
     "status": "PENDING"
   }'
 
-# Add deployment block
-curl -X POST $BASE/blockchain/deployment \
+# Add payment block
+curl -X POST $BASE/blockchain/payment \
   -H "Content-Type: application/json" \
   -d '{
-    "service": "order-service",
-    "image_digest": "sha256:abc123",
-    "commit_hash": "a1b2c3d",
-    "sast": "PASS",
-    "trivy": "PASS",
-    "dast": "PASS",
-    "environment": "production"
+    "payment_id": "PAY-001",
+    "order_id": "ORD-001",
+    "amount": 71980,
+    "status": "PAID"
   }'
 
 # Validate chain
@@ -332,20 +315,17 @@ curl $BASE/blockchain/validate
 # Verify order
 curl $BASE/blockchain/verify/order/ORD-001
 
-# Verify deployment
-curl $BASE/blockchain/verify/deployment/order-service
+# Verify payment
+curl $BASE/blockchain/verify/payment/PAY-001
 
 # Get full chain
 curl $BASE/blockchain/chain
-
-# Deployment history
-curl $BASE/blockchain/history/deployment/order-service
 
 # Health check
 curl $BASE/health
 
 # Swagger UI
-# Open http://localhost:3004/docs in browser
+# Open http://localhost:8000/docs in browser
 ```
 
 ---
@@ -356,7 +336,7 @@ curl $BASE/health
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│              blockchain-service :3004                      │
+│              blockchain-service :8000                     │
 │                                                            │
 │  /metrics  ──────────────────────────► Prometheus          │
 │  stdout (JSON logs) ─────► Alloy ───► Loki                │
