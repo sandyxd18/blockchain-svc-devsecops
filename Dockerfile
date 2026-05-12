@@ -17,7 +17,20 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt && \
+    # Upgrade venv packages with known CVEs to their fixed versions
+    pip install --no-cache-dir --force-reinstall \
+        "wheel>=0.46.2" "setuptools>=80.0.0" "jaraco-context>=6.1.0" && \
+    # Remove build-only packages from venv — not needed at runtime
+    # This ensures Trivy finds NO vulnerable pip/wheel/jaraco in the final image
+    pip uninstall -y pip setuptools wheel jaraco-context jaraco.functools 2>/dev/null; \
+    rm -rf /opt/venv/lib/python3.11/site-packages/pip* \
+           /opt/venv/lib/python3.11/site-packages/setuptools* \
+           /opt/venv/lib/python3.11/site-packages/_distutils_hack* \
+           /opt/venv/lib/python3.11/site-packages/pkg_resources* \
+           /opt/venv/lib/python3.11/site-packages/wheel* \
+           /opt/venv/lib/python3.11/site-packages/jaraco* \
+           /opt/venv/bin/pip* /opt/venv/bin/wheel* /opt/venv/bin/easy_install*
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 2 — python-clean: strip vulnerable system packages from Python image
