@@ -27,12 +27,22 @@ FROM python:3.11-alpine AS runner
 
 WORKDIR /app
 
-# Runtime dependency for asyncpg (Alpine uses libpq from postgresql-libs)
-RUN apk add --no-cache libpq
+# Runtime dependency for asyncpg + upgrade ALL Alpine packages to fix xz-libs CVE
+RUN apk add --no-cache libpq && \
+    apk upgrade --no-cache
 
 # Copy virtual environment from builder
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
+
+# Fix system-level Python CVEs (pip, wheel, jaraco-context from base image)
+# Must run AFTER venv copy so system Python packages are upgraded last
+RUN /usr/local/bin/python -m pip install --no-cache-dir --force-reinstall \
+    "pip>=26.1" "wheel>=0.46.2" "setuptools" "jaraco-context>=6.1.0" && \
+    find /usr/local/lib/python3.11 -type d -name "pip-24.*" -exec rm -rf {} + 2>/dev/null; \
+    find /usr/local/lib/python3.11 -type d -name "wheel-0.4[0-5].*" -exec rm -rf {} + 2>/dev/null; \
+    find /usr/local/lib/python3.11 -type d -name "jaraco_context-5.*" -exec rm -rf {} + 2>/dev/null; \
+    true
 
 # Create non-root user for security
 RUN addgroup --system --gid 1001 appgroup && \
