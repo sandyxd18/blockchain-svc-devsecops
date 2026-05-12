@@ -20,27 +20,39 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Stage 2 — runner: Alpine-based minimal production image
-# Switching from python:3.11-slim (Debian, 140+ CVEs) to Alpine (<10 CVEs)
+# Stage 2 — python-clean: strip vulnerable system packages from Python image
+# Trivy scans all Docker layers, so we must remove packages HERE (same stage)
+# before COPY --from picks them up in the runner stage
 # ─────────────────────────────────────────────────────────────────────────────
-FROM python:3.11-alpine AS runner
+FROM python:3.11-alpine AS python-clean
+
+RUN rm -rf /usr/local/lib/python3.11/site-packages/* \
+           /usr/local/lib/python3.11/ensurepip/ \
+           /usr/local/bin/pip* /usr/local/bin/wheel* \
+           /usr/local/bin/easy_install*
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 3 — runner: clean Alpine base + stripped Python = 0 CVEs
+# Base is alpine (no Python layer CVEs), Python copied without site-packages
+# ─────────────────────────────────────────────────────────────────────────────
+FROM alpine:3.21 AS runner
 
 WORKDIR /app
 
-# Runtime dependency for asyncpg + upgrade ALL Alpine packages to fix OS CVEs
-RUN apk add --no-cache libpq && \
+# Install runtime OS dependencies
+RUN apk add --no-cache libpq libffi libstdc++ libgcc && \
     apk upgrade --no-cache
+
+# Copy CLEANED Python installation (without pip/wheel/setuptools/jaraco-context)
+# COPY --from only copies files that EXIST — removed files won't transfer
+COPY --from=python-clean /usr/local/ /usr/local/
+
+# Make sure dynamic linker can find Python shared libs
+RUN ldconfig /usr/local/lib 2>/dev/null || true
 
 # Copy virtual environment from builder
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
-
-# Remove ALL system-level Python packages (pip, wheel, setuptools, jaraco-context)
-# The app runs entirely from the venv — system packages are NOT needed at runtime
-# This eliminates base image CVEs that Trivy detects in lower Docker layers
-RUN rm -rf /usr/local/lib/python3.11/site-packages/* \
-           /usr/local/lib/python3.11/ensurepip/ \
-           /usr/local/bin/pip* /usr/local/bin/wheel
 
 # Create non-root user for security
 RUN addgroup --system --gid 1001 appgroup && \
