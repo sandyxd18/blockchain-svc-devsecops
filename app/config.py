@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     otel_exporter_otlp_endpoint: str = "http://alloy:4317"
     log_level: str = "INFO"
 
+    # CORS — comma-separated origins. Falls back to localhost defaults.
+    cors_allowed_origins: str = "http://localhost,http://localhost:80,http://localhost:8081,http://localhost:5173,http://localhost:5174"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Parse CORS_ALLOWED_ORIGINS into a list of origin strings."""
+        return [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()]
+
     @property
     def is_production(self) -> bool:
         return self.node_env == "production"
