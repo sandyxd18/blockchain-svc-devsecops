@@ -31,6 +31,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     && rm -rf /var/lib/apt/lists/*
 
+# Upgrade system-level Python packages to fix Trivy-detected CVEs in base image
+RUN pip install --no-cache-dir --upgrade pip wheel>=0.46.2 setuptools jaraco-context>=6.1.0
+
 # Copy virtual environment from builder
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
