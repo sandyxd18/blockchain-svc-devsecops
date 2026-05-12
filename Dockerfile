@@ -27,7 +27,7 @@ FROM python:3.11-alpine AS runner
 
 WORKDIR /app
 
-# Runtime dependency for asyncpg + upgrade ALL Alpine packages to fix xz-libs CVE
+# Runtime dependency for asyncpg + upgrade ALL Alpine packages to fix OS CVEs
 RUN apk add --no-cache libpq && \
     apk upgrade --no-cache
 
@@ -35,14 +35,12 @@ RUN apk add --no-cache libpq && \
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Fix system-level Python CVEs (pip, wheel, jaraco-context from base image)
-# Must run AFTER venv copy so system Python packages are upgraded last
-RUN /usr/local/bin/python -m pip install --no-cache-dir --force-reinstall \
-    "pip>=26.1" "wheel>=0.46.2" "setuptools" "jaraco-context>=6.1.0" && \
-    find /usr/local/lib/python3.11 -type d -name "pip-24.*" -exec rm -rf {} + 2>/dev/null; \
-    find /usr/local/lib/python3.11 -type d -name "wheel-0.4[0-5].*" -exec rm -rf {} + 2>/dev/null; \
-    find /usr/local/lib/python3.11 -type d -name "jaraco_context-5.*" -exec rm -rf {} + 2>/dev/null; \
-    true
+# Remove ALL system-level Python packages (pip, wheel, setuptools, jaraco-context)
+# The app runs entirely from the venv — system packages are NOT needed at runtime
+# This eliminates base image CVEs that Trivy detects in lower Docker layers
+RUN rm -rf /usr/local/lib/python3.11/site-packages/* \
+           /usr/local/lib/python3.11/ensurepip/ \
+           /usr/local/bin/pip* /usr/local/bin/wheel
 
 # Create non-root user for security
 RUN addgroup --system --gid 1001 appgroup && \
