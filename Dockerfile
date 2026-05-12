@@ -20,32 +20,23 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Stage 2 — runner: minimal production image
+# Stage 2 — runner: Alpine-based minimal production image
+# Switching from python:3.11-slim (Debian, 140+ CVEs) to Alpine (<10 CVEs)
 # ─────────────────────────────────────────────────────────────────────────────
-FROM python:3.11-slim AS runner
+FROM python:3.11-alpine AS runner
 
 WORKDIR /app
 
-# Runtime dependency for asyncpg
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Upgrade system-level Python packages to fix Trivy-detected CVEs in base image
-# Force-reinstall and remove old dist-info so Trivy no longer detects stale versions
-RUN /usr/local/bin/python -m pip install --no-cache-dir --force-reinstall \
-    "wheel>=0.46.2" "setuptools" "jaraco-context>=6.1.0" && \
-    find /usr/local/lib/python3.11 -type d -name "jaraco_context-5.*" -exec rm -rf {} + 2>/dev/null; \
-    find /usr/local/lib/python3.11 -type d -name "wheel-0.4[0-5].*" -exec rm -rf {} + 2>/dev/null; \
-    true
+# Runtime dependency for asyncpg (Alpine uses libpq from postgresql-libs)
+RUN apk add --no-cache libpq
 
 # Copy virtual environment from builder
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Create non-root user for security
-RUN groupadd --system --gid 1001 appgroup && \
-    useradd  --system --uid 1001 --gid appgroup appuser
+RUN addgroup --system --gid 1001 appgroup && \
+    adduser  --system --uid 1001 --ingroup appgroup --no-create-home appuser
 
 # Copy application source
 COPY --chown=appuser:appgroup app/ ./app/
@@ -55,6 +46,6 @@ USER appuser
 EXPOSE ${PORT:-8000}
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD python -c "import urllib.request, os; urllib.request.urlopen(f'http://localhost:{os.environ.get(\"PORT\", \"8000\")}/health')"
+  CMD ["python", "-c", "import urllib.request, os; urllib.request.urlopen(f'http://localhost:{os.environ.get(\"PORT\", \"8000\")}/health')"]
 
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --no-access-log --log-level warning
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log", "--log-level", "warning"]
