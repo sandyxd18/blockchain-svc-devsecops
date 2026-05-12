@@ -32,7 +32,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Upgrade system-level Python packages to fix Trivy-detected CVEs in base image
-RUN pip install --no-cache-dir --upgrade pip wheel>=0.46.2 setuptools jaraco-context>=6.1.0
+# Force-reinstall and remove old dist-info so Trivy no longer detects stale versions
+RUN /usr/local/bin/python -m pip install --no-cache-dir --force-reinstall \
+    "wheel>=0.46.2" "setuptools" "jaraco-context>=6.1.0" && \
+    find /usr/local/lib/python3.11 -type d -name "jaraco_context-5.*" -exec rm -rf {} + 2>/dev/null; \
+    find /usr/local/lib/python3.11 -type d -name "wheel-0.4[0-5].*" -exec rm -rf {} + 2>/dev/null; \
+    true
 
 # Copy virtual environment from builder
 COPY --from=builder /opt/venv /opt/venv
