@@ -29,34 +29,25 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
         -r requirements.txt
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Stage 2 — python-clean: strip vulnerable system packages from Python image
-# Trivy scans all Docker layers, so we must remove packages HERE (same stage)
-# before COPY --from picks them up in the runner stage
+# Stage 2 — runner: minimal production image
 # ─────────────────────────────────────────────────────────────────────────────
-
 # MUST use the identical base as builder so the compiled .so files are ABI-compatible.
 FROM python:3.11.9-slim-bookworm AS runner
 
 WORKDIR /app
 
-# Install runtime OS dependencies
-RUN apk add --no-cache libpq libffi libstdc++ libgcc && \
-    apk upgrade --no-cache
-
-# Copy CLEANED Python installation (without pip/wheel/setuptools/jaraco-context)
-# COPY --from only copies files that EXIST — removed files won't transfer
-COPY --from=python-clean /usr/local/ /usr/local/
-
-# Make sure dynamic linker can find Python shared libs
-RUN ldconfig /usr/local/lib 2>/dev/null || true
+# Runtime dependency for asyncpg (libpq5) — apt-get because base is Debian/bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy virtual environment from builder
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Create non-root user for security
-RUN addgroup --system --gid 1001 appgroup && \
-    adduser  --system --uid 1001 --ingroup appgroup --no-create-home appuser
+# Create non-root user for security (groupadd/useradd = Debian commands, NOT Alpine)
+RUN groupadd --system --gid 1001 appgroup && \
+    useradd  --system --uid 1001 --gid appgroup --no-create-home appuser
 
 # Copy application source
 COPY --chown=appuser:appgroup app/ ./app/
