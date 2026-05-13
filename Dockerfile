@@ -1,62 +1,45 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 1 — builder
-# python:3.11-alpine uses musl libc — compiled C extensions (asyncpg,
-# pydantic-core) are built for musl, so they are ABI-compatible with runner.
+# Uses python:3.11-slim (Debian/glibc) — reliable package availability,
+# no Alpine musl/glibc ABI mismatch, no Alpine package name confusion.
 # ─────────────────────────────────────────────────────────────────────────────
-FROM python:3.11-alpine AS builder
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Build tools for C extensions:
-#   postgresql-dev  → libpq headers (for asyncpg)   [Alpine name, NOT libpq-dev]
-#   python3-dev     → Python C headers (for uvloop, httptools)
-#   gcc musl-dev    → compiler + musl headers
-#   libffi-dev      → FFI headers (for some otel packages)
-RUN apk add --no-cache gcc musl-dev python3-dev postgresql-dev libffi-dev
-
-# Create isolated virtual environment
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+# Build deps for C extensions (asyncpg compiles C, pydantic-core uses Rust wheels)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc \
+        libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
 
-# 1. Upgrade pip/wheel/setuptools inside venv
-# 2. Install all app dependencies
-# 3. Verify uvicorn binary exists (fail build loudly if missing)
-# 4. Strip build-only packages from venv to reduce CVE surface
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt && \
-    # Fail fast if uvicorn was not installed correctly
+# Install all app dependencies into a venv for clean isolation
+RUN python -m venv /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir --upgrade pip && \
+    /opt/venv/bin/pip install --no-cache-dir -r requirements.txt && \
+    # Verify uvicorn is installed — fail loudly if not
     /opt/venv/bin/uvicorn --version && \
-    # Strip build-only tools (not needed at runtime)
-    pip uninstall -y pip setuptools wheel 2>/dev/null || true && \
-    rm -rf \
-        /opt/venv/lib/python3.11/site-packages/pip* \
-        /opt/venv/lib/python3.11/site-packages/setuptools* \
-        /opt/venv/lib/python3.11/site-packages/_distutils_hack* \
-        /opt/venv/lib/python3.11/site-packages/pkg_resources* \
-        /opt/venv/lib/python3.11/site-packages/wheel* \
-        /opt/venv/bin/pip* \
-        /opt/venv/bin/wheel* \
-        /opt/venv/bin/easy_install*
+    echo "=== venv bin contents ===" && \
+    ls -la /opt/venv/bin/
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 2 — runner
-# Minimal Alpine image — MUST use same musl libc as builder.
+# MUST use same glibc base as builder so compiled .so files are ABI-compatible.
 # ─────────────────────────────────────────────────────────────────────────────
-FROM python:3.11-alpine AS runner
+FROM python:3.11-slim AS runner
 
 WORKDIR /app
 
-# Runtime libs only (no build headers):
-#   libpq     → asyncpg runtime (Alpine name)
-#   libffi    → FFI runtime
-RUN apk add --no-cache libpq libffi && \
-    apk upgrade --no-cache && \
-    # Remove build tools and CVE-bearing packages from system Python.
-    # The app ONLY uses /opt/venv, so system pip/wheel/setuptools are unused.
-    # Removes: CVE-2026-23949 (jaraco.context), CVE-2026-24049 (wheel),
-    #          CVE-2025-8869 / CVE-2026-3219 / CVE-2026-6357 / CVE-2026-1703 (pip)
+# Runtime libs only (libpq5 = asyncpg runtime, no -dev headers needed)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libpq5 \
+    && rm -rf /var/lib/apt/lists/* && \
+    # Remove pip/wheel/setuptools/jaraco from system Python to eliminate CVEs:
+    # CVE-2026-23949 (jaraco.context), CVE-2026-24049 (wheel),
+    # CVE-2025-8869 / CVE-2026-3219 / CVE-2026-6357 / CVE-2026-1703 (pip)
+    pip uninstall -y pip setuptools wheel 2>/dev/null || true && \
     rm -rf \
         /usr/local/lib/python3.11/site-packages/pip* \
         /usr/local/lib/python3.11/site-packages/wheel* \
@@ -69,13 +52,17 @@ RUN apk add --no-cache libpq libffi && \
         /usr/local/bin/wheel* \
         /usr/local/bin/easy_install*
 
-# Copy the pre-built virtual environment from builder
+# Copy the fully-built virtual environment from builder
 COPY --from=builder /opt/venv /opt/venv
+
+# Verify the venv copy worked correctly
+RUN ls -la /opt/venv/bin/uvicorn
+
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Create non-root user (Alpine uses addgroup/adduser, NOT groupadd/useradd)
-RUN addgroup --system --gid 1001 appgroup && \
-    adduser  --system --uid 1001 --ingroup appgroup --no-create-home appuser
+# Create non-root user (Debian uses groupadd/useradd)
+RUN groupadd --system --gid 1001 appgroup && \
+    useradd  --system --uid 1001 --gid appgroup --no-create-home appuser
 
 # Copy application source
 COPY --chown=appuser:appgroup app/ ./app/
