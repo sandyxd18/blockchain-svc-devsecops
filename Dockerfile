@@ -41,7 +41,22 @@ WORKDIR /app
 
 # Runtime libraries only (no build tools)
 RUN apk add --no-cache libpq libffi && \
-    apk upgrade --no-cache
+    apk upgrade --no-cache && \
+    # Remove vulnerable build-only packages from system Python:
+    # pip (CVE-2025-8869, CVE-2026-3219, CVE-2026-6357, CVE-2026-1703)
+    # wheel (CVE-2026-24049), jaraco.context (CVE-2026-23949)
+    # These are NOT needed at runtime — app uses /opt/venv exclusively.
+    rm -rf \
+        /usr/local/lib/python3.11/site-packages/pip* \
+        /usr/local/lib/python3.11/site-packages/wheel* \
+        /usr/local/lib/python3.11/site-packages/setuptools* \
+        /usr/local/lib/python3.11/site-packages/_distutils_hack* \
+        /usr/local/lib/python3.11/site-packages/pkg_resources* \
+        /usr/local/lib/python3.11/site-packages/jaraco* \
+        /usr/local/lib/python3.11/ensurepip/ \
+        /usr/local/bin/pip* \
+        /usr/local/bin/wheel* \
+        /usr/local/bin/easy_install*
 
 # Copy virtual environment from builder (contains uvicorn + all app deps)
 COPY --from=builder /opt/venv /opt/venv
