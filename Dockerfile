@@ -1,17 +1,20 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 1 — builder
-# Uses python:3.11-slim (Debian/glibc) — reliable package availability,
-# no Alpine musl/glibc ABI mismatch, no Alpine package name confusion.
+# Uses python:3.11-alpine to ensure ABI compatibility with the runner
 # ─────────────────────────────────────────────────────────────────────────────
-FROM python:3.11-slim AS builder
+FROM python:3.11-alpine AS builder
 
 WORKDIR /app
 
 # Build deps for C extensions (asyncpg compiles C, pydantic-core uses Rust wheels)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apk add --no-cache \
         gcc \
-        libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
+        musl-dev \
+        postgresql-dev \
+        python3-dev \
+        libffi-dev \
+        g++ \
+        make
 
 COPY requirements.txt ./
 
@@ -21,32 +24,31 @@ RUN python -m venv /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir -r requirements.txt && \
     # Verify uvicorn is installed — fail loudly if not
     /opt/venv/bin/uvicorn --version && \
-    echo "=== venv bin contents ===" && \
-    ls -la /opt/venv/bin/
+    # Remove vulnerable packages from the venv
+    /opt/venv/bin/pip uninstall -y pip setuptools wheel jaraco-context jaraco.functools 2>/dev/null || true && \
+    rm -rf /opt/venv/lib/python3.11/site-packages/pip* \
+           /opt/venv/lib/python3.11/site-packages/wheel* \
+           /opt/venv/lib/python3.11/site-packages/setuptools* \
+           /opt/venv/lib/python3.11/site-packages/_distutils_hack* \
+           /opt/venv/lib/python3.11/site-packages/pkg_resources* \
+           /opt/venv/lib/python3.11/site-packages/jaraco* \
+           /opt/venv/bin/pip* /opt/venv/bin/wheel* /opt/venv/bin/easy_install*
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 2 — runner
-# MUST use same glibc base as builder so compiled .so files are ABI-compatible.
 # ─────────────────────────────────────────────────────────────────────────────
-FROM python:3.11-slim AS runner
+FROM python:3.11-alpine AS runner
 
 WORKDIR /app
 
-# Runtime libs only (libpq5 = asyncpg runtime, no -dev headers needed)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libpq5 \
-    && rm -rf /var/lib/apt/lists/* && \
-    # Remove pip/wheel/setuptools/jaraco from system Python to eliminate CVEs:
-    # CVE-2026-23949 (jaraco.context), CVE-2026-24049 (wheel),
-    # CVE-2025-8869 / CVE-2026-3219 / CVE-2026-6357 / CVE-2026-1703 (pip)
-    pip uninstall -y pip setuptools wheel 2>/dev/null || true && \
+# Runtime libs only
+RUN apk add --no-cache \
+        libpq \
+        libstdc++ \
+        libgcc && \
+    # Remove pip/wheel/setuptools from system Python to eliminate CVEs
     rm -rf \
-        /usr/local/lib/python3.11/site-packages/pip* \
-        /usr/local/lib/python3.11/site-packages/wheel* \
-        /usr/local/lib/python3.11/site-packages/setuptools* \
-        /usr/local/lib/python3.11/site-packages/_distutils_hack* \
-        /usr/local/lib/python3.11/site-packages/pkg_resources* \
-        /usr/local/lib/python3.11/site-packages/jaraco* \
+        /usr/local/lib/python3.11/site-packages/* \
         /usr/local/lib/python3.11/ensurepip/ \
         /usr/local/bin/pip* \
         /usr/local/bin/wheel* \
@@ -60,9 +62,9 @@ RUN ls -la /opt/venv/bin/uvicorn
 
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Create non-root user (Debian uses groupadd/useradd)
-RUN groupadd --system --gid 1001 appgroup && \
-    useradd  --system --uid 1001 --gid appgroup --no-create-home appuser
+# Create non-root user
+RUN addgroup -S appgroup && \
+    adduser -S appuser -G appgroup -h /app
 
 # Copy application source
 COPY --chown=appuser:appgroup app/ ./app/
