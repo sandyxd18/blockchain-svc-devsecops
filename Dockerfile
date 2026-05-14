@@ -46,6 +46,7 @@ RUN apk add --no-cache \
         libpq \
         libstdc++ \
         libgcc && \
+    apk upgrade --no-cache && \
     # Remove pip/wheel/setuptools from system Python to eliminate CVEs
     rm -rf \
         /usr/local/lib/python3.11/site-packages/* \
